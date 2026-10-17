@@ -25,6 +25,19 @@ export default function RootLayout({
   return (
     <html lang="en" className={cn("font-sans", geist.variable)} suppressHydrationWarning>
       <head>
+        <Script
+          id="console-override"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              const orig = console.error;
+              console.error = function(...args) {
+                if (typeof args[0] === 'string' && args[0].includes('Encountered a script tag')) return;
+                orig.apply(console, args);
+              };
+            `
+          }}
+        />
       </head>
       <body className="bg-background text-foreground m-0 p-0 antialiased min-h-screen" suppressHydrationWarning>
         <SuppressWarning />
