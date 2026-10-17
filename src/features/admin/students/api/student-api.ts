@@ -47,13 +47,14 @@ function mapStudent(s: Record<string, unknown>): Student {
     course_name: (s.course_name as string) || (s.course as Record<string, unknown>)?.name as string || "",
     email: (s.email as string) || "",
     status: s.status ? ((s.status as string).charAt(0).toUpperCase() + (s.status as string).slice(1).toLowerCase()) : "Active",
+    profile_image: (s.profile_image as string) || undefined,
   };
 }
 
 /**
  * Fetch all students
  */
-export async function fetchStudents(page: number = 1, limit: number = 50, search?: string, statusFilter?: string, courseId?: string, institutionId?: string) {
+export async function fetchStudents(page: number = 1, limit: number = 10, search?: string, statusFilter?: string, courseId?: string, institutionId?: string) {
   let url = BASE_URL;
   const query = new URLSearchParams();
   if (page !== undefined && limit !== undefined) {
@@ -191,7 +192,7 @@ export async function updateStudent(id: string | number, data: Record<string, un
  * TanStack Query Hooks
  */
 
-export function useStudents(page: number = 1, limit: number = 50, search?: string, statusFilter?: string, courseId?: string, institutionId?: string) {
+export function useStudents(page: number = 1, limit: number = 10, search?: string, statusFilter?: string, courseId?: string, institutionId?: string) {
   return useQuery({
     queryKey: ["students", { page, limit, search, statusFilter, courseId, institutionId }],
     queryFn: () => fetchStudents(page, limit, search, statusFilter, courseId, institutionId),
