@@ -4,7 +4,7 @@ import { useUploadBatchStudentsCsv } from "@/hooks/use-batches";
 import { downloadBatchBulkUploadTemplate } from "@/features/admin/batches/api/batch-api";
 import { Modal } from "@/components/ui/modal";
 import { Info, Download, Upload, File, X } from "lucide-react";
-import { toast } from "sonner";
+import toast from "react-hot-toast";
 
 interface Props {
   open: boolean;
@@ -47,7 +47,8 @@ export default function BulkUploadModal({ open, onClose, batchId }: Props) {
       return;
     }
 
-    uploadMutation.mutate({ id: batchId || "15", file }, {
+    const targetId = batchId || "15";
+    uploadMutation.mutate({ id: targetId, file }, {
       onSuccess: () => {
         onClose();
         setFile(null);
@@ -57,18 +58,10 @@ export default function BulkUploadModal({ open, onClose, batchId }: Props) {
 
   const handleDownloadTemplate = async () => {
     try {
-      const blob = await downloadBatchBulkUploadTemplate();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", "batch_student_enrollment_template.csv");
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await downloadBatchBulkUploadTemplate();
       toast.success("Template downloaded successfully");
-    } catch (error: any) {
-      toast.error(error.message || "Failed to download template");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to download template");
     }
   };
 

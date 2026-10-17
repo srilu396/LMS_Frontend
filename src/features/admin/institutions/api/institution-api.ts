@@ -213,5 +213,3 @@ export async function fetchInstitutionsLookup(search?: string): Promise<any[]> {
   const data = await handleResponse(response);
   return data.data || [];
 }
-
-

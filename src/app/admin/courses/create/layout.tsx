@@ -1,22 +1,43 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useCourseStore } from "@/store/useCourseStore";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCourseStore, Quiz as StoreQuiz, Assignment as StoreAssignment, Module as StoreModule, Lesson as StoreLesson, Topic as StoreTopic } from "@/store/useCourseStore";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+
+interface QuizLookupItem {
+  id: string | number;
+  quiz_title?: string;
+  title?: string;
+}
+
+interface AssignmentLookupItem {
+  id?: string | number;
+  assignment_id?: string | number;
+  title?: string;
+  assignment_name?: string;
+}
 
 export default function CourseCreationLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id");
+  
+  const lastSavedPayloadsRef = useRef<Map<string, string>>(new Map());
+  const quizzesCacheRef = useRef<QuizLookupItem[] | null>(null);
+  const assignmentsCacheRef = useRef<AssignmentLookupItem[] | null>(null);
+  const previousIdRef = useRef<string | null>(null);
+  const lastSavedCourseJsonRef = useRef<string | null>(null);
+  const isComponentMountedRef = useRef(true);
+  const isSavingRef = useRef(false);
   
   const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const [isSaving, setIsSaving] = useState(false);
   
   const { 
     course, 
@@ -31,7 +52,7 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
   const activeLesson = activeLessonId && activeModule ? activeModule.lessons.find(l => String(l.id) === String(activeLessonId)) : undefined;
   const activeTopic = activeTopicId && activeLesson ? activeLesson.topics.find(t => String(t.id) === String(activeTopicId)) : undefined;
 
-  let activeQuiz: any = undefined;
+  let activeQuiz: StoreQuiz | undefined = undefined;
   if (activeQuizId) {
     if (activeLesson) {
       activeQuiz = activeLesson.quizzes?.find(q => String(q.id) === String(activeQuizId));
@@ -42,7 +63,7 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
     }
   }
 
-  let activeAssignment: any = undefined;
+  let activeAssignment: StoreAssignment | undefined = undefined;
   if (activeAssignmentId) {
     if (activeLesson) {
       activeAssignment = activeLesson.assignments?.find(a => String(a.id) === String(activeAssignmentId));
@@ -53,13 +74,14 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
     }
   }
 
-  const cleanPayload = (obj: any) => {
-    const clean: any = {};
+  const cleanPayload = (obj: Record<string, unknown>) => {
+    const clean: Record<string, unknown> = {};
     for (const key of Object.keys(obj)) {
       const val = obj[key];
       if (val === null || val === undefined) {
         continue;
       }
+      // Omit empty arrays for optional fields
       if (Array.isArray(val) && val.length === 0) {
         continue;
       }
@@ -68,11 +90,62 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
     return clean;
   };
 
+  const hasUnsavedChanges = () => {
+    const { course, deletedModules, deletedLessons, deletedTopics } = useCourseStore.getState();
+    if (deletedModules.length > 0 || deletedLessons.length > 0 || deletedTopics.length > 0) {
+      return true;
+    }
+    if (!lastSavedCourseJsonRef.current) {
+      return !!course.title;
+    }
+    const currentJson = JSON.stringify(course);
+    return currentJson !== lastSavedCourseJsonRef.current;
+  };
+
   const handleSave = async (status: "draft" | "published", isSilent = false) => {
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    if (isComponentMountedRef.current) {
+      setIsSaving(true);
+    }
+
     const currentCourse = useCourseStore.getState().course;
     if (!currentCourse.title) {
       if (!isSilent) {
         alert("Please enter a course title first.");
+      }
+      isSavingRef.current = false;
+      if (isComponentMountedRef.current) {
+        setIsSaving(false);
+      }
+      return;
+    }
+
+    // Session validation before attempting API save
+    let tokenExists = false;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (typeof document !== "undefined") {
+      const match = document.cookie.match(/(^| )token=([^;]+)/);
+      if (match && match[2]) {
+        headers["Authorization"] = `Bearer ${match[2]}`;
+        tokenExists = true;
+      }
+    }
+
+    if (!tokenExists) {
+      if (!isSilent) {
+        toast.error("Your session has expired. Redirecting to login...");
+        if (typeof window !== "undefined") {
+          setTimeout(() => {
+            window.location.href = "/login";
+          }, 1500);
+        }
+      }
+      isSavingRef.current = false;
+      if (isComponentMountedRef.current) {
+        setIsSaving(false);
       }
       return;
     }
@@ -107,30 +180,38 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
           },
         });
         if (!res.ok) {
-          let errData: any = {};
-          let text = "";
-          try {
-            text = await res.text();
-            errData = JSON.parse(text);
-          } catch (e) {
-            errData = { message: text || res.statusText || `Status ${res.status}` };
-          }
-          let messageStr = "API request failed";
-          if (errData.errors) {
-            if (Array.isArray(errData.errors)) {
-              messageStr = errData.errors.map((e: any) => typeof e === 'string' ? e : JSON.stringify(e)).join(", ");
-            } else if (typeof errData.errors === "object") {
-              messageStr = Object.values(errData.errors).flat().join(", ");
-            } else {
-              messageStr = String(errData.errors);
+          let messageStr = "";
+          const errData = await res.json().catch(() => null);
+          
+          if (errData) {
+            if (errData.errors) {
+              if (Array.isArray(errData.errors)) {
+                messageStr = errData.errors.map((e: unknown) => typeof e === 'string' ? e : (e && typeof e === 'object' && 'message' in e ? String((e as { message?: string }).message) : JSON.stringify(e))).join(", ");
+              } else if (typeof errData.errors === "object") {
+                messageStr = Object.values(errData.errors).flat().map((e: unknown) => typeof e === 'string' ? e : (e && typeof e === 'object' && 'message' in e ? String((e as { message?: string }).message) : JSON.stringify(e))).join(", ");
+              } else {
+                messageStr = String(errData.errors);
+              }
+            } else if (Array.isArray(errData.message)) {
+              messageStr = errData.message.join(", ");
+            } else if (errData.message) {
+              messageStr = errData.message;
+            } else if (errData.error) {
+              messageStr = errData.error;
+            } else if (errData.detail) {
+              messageStr = errData.detail;
             }
-          } else if (Array.isArray(errData.message)) {
-            messageStr = errData.message.join(", ");
-          } else if (errData.message) {
-            messageStr = errData.message;
-          } else if (errData.detail) {
-            messageStr = errData.detail;
           }
+
+          if (!messageStr) {
+            if (res.status === 400) messageStr = "Validation or bad request error.";
+            else if (res.status === 401) messageStr = "Token expired";
+            else if (res.status === 403) messageStr = "Access denied. You do not have permission to perform this action.";
+            else if (res.status === 404) messageStr = "The requested resource was not found on the server.";
+            else if (res.status === 500) messageStr = "Internal Server Error. Please contact support or try again later.";
+            else messageStr = `API request failed with status ${res.status}`;
+          }
+
           if (res.status === 401 || messageStr.toLowerCase().includes("token expired")) {
             throw new Error("Token expired");
           }
@@ -139,15 +220,41 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
         return res;
       };
 
+      // Process deleted items
+      const { deletedModules, deletedLessons, deletedTopics, clearDeletedItems } = useCourseStore.getState();
+      
+      for (const mId of deletedModules) {
+        if (!mId.startsWith('temp-')) {
+          await secureFetch(`/api/v1/modules/${mId}`, { method: 'DELETE' }).catch(e => console.warn('Failed to delete module', e));
+        }
+      }
+      for (const lId of deletedLessons) {
+        if (!lId.startsWith('temp-')) {
+          await secureFetch(`/api/v1/lessons/${lId}`, { method: 'DELETE' }).catch(e => console.warn('Failed to delete UI lesson', e));
+        }
+      }
+      for (const tId of deletedTopics) {
+        if (!tId.startsWith('temp-')) {
+          await secureFetch(`/api/v1/topics/${tId}`, { method: 'DELETE' }).catch(e => console.warn('Failed to delete UI topic', e));
+        }
+      }
+      
+      clearDeletedItems();
+
       // Fetch all quizzes and assignments to build title-to-ID lookup maps
-      let quizzesList: any[] = [];
-      try {
-        const quizzesRes = await secureFetch("/api/v1/quizzes");
-        const quizzesJson = await quizzesRes.json();
-        quizzesList = quizzesJson.data || quizzesJson || [];
-      } catch (err: any) {
-        if (err.message === "Token expired") throw err;
-        console.warn("Failed to fetch quizzes list, fallback to empty", err);
+      let quizzesList: QuizLookupItem[] | null = quizzesCacheRef.current;
+      if (!quizzesList) {
+        try {
+          const quizzesRes = await secureFetch("/api/v1/quizzes");
+          const quizzesJson = await quizzesRes.json();
+          quizzesList = quizzesJson.data || quizzesJson || [];
+          quizzesCacheRef.current = quizzesList;
+        } catch (err) {
+          const error = err as Error;
+          if (error.message === "Token expired") throw error;
+          console.warn("Failed to fetch quizzes list, fallback to empty", error);
+          quizzesList = [];
+        }
       }
 
       const quizTitleToIdMap = new Map<string, number>();
@@ -160,14 +267,19 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
         }
       }
 
-      let assignmentsList: any[] = [];
-      try {
-        const assignmentsRes = await secureFetch("/api/v1/assignments");
-        const assignmentsJson = await assignmentsRes.json();
-        assignmentsList = assignmentsJson.data || assignmentsJson || [];
-      } catch (err: any) {
-        if (err.message === "Token expired") throw err;
-        console.warn("Failed to fetch assignments list, fallback to empty", err);
+      let assignmentsList: AssignmentLookupItem[] | null = assignmentsCacheRef.current;
+      if (!assignmentsList) {
+        try {
+          const assignmentsRes = await secureFetch("/api/v1/assignments");
+          const assignmentsJson = await assignmentsRes.json();
+          assignmentsList = assignmentsJson.data || assignmentsJson || [];
+          assignmentsCacheRef.current = assignmentsList;
+        } catch (err) {
+          const error = err as Error;
+          if (error.message === "Token expired") throw error;
+          console.warn("Failed to fetch assignments list, fallback to empty", error);
+          assignmentsList = [];
+        }
       }
 
       const assignmentTitleToIdMap = new Map<string, number>();
@@ -181,13 +293,13 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
         }
       }
 
-      const getQuizId = (quiz: any) => {
+      const getQuizId = (quiz: { id: string | number; title?: string }) => {
         if (!isNaN(Number(quiz.id))) return Number(quiz.id);
         const titleKey = (quiz.title || "").trim().toLowerCase();
         return quizTitleToIdMap.get(titleKey) || null;
       };
 
-      const getAssignmentId = (assignment: any) => {
+      const getAssignmentId = (assignment: { id: string | number; title?: string }) => {
         if (!isNaN(Number(assignment.id))) return Number(assignment.id);
         const titleKey = (assignment.title || "").trim().toLowerCase();
         return assignmentTitleToIdMap.get(titleKey) || null;
@@ -200,6 +312,8 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
         .map(getAssignmentId)
         .filter((id): id is number => id !== null);
 
+      let isNewCourse = !courseId || String(courseId).startsWith("temp-");
+
       const backendStatus = status === "published" ? "active" : "draft";
 
       const updatedCourse = JSON.parse(JSON.stringify(currentCourse));
@@ -207,59 +321,139 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
       let newActiveLessonId = useCourseStore.getState().activeLessonId;
       let newActiveTopicId = useCourseStore.getState().activeTopicId;
 
+
+
       // 1. Create or Update Course
-      if (!courseId || String(courseId).startsWith("temp-")) {
+      if (isNewCourse) {
+        // Send a placeholder assignment object inside the assignments array of the course POST body.
+        // This is required by backend Joi validation (min(1).required()).
+        // It will be deleted if the user has selected a real assignment from the library.
+        const placeholderAssignment = {
+          title: `${currentCourse.title} - Final Assignment`,
+          submission_type: "file",
+          max_score: 100
+        };
+
+        const coursePayload: Record<string, unknown> = {
+          name: currentCourse.title,
+          description: currentCourse.description || "Platform Course",
+          thumbnail_url: currentCourse.thumbnail_url || undefined,
+          tags: currentCourse.tags ? currentCourse.tags.split(",").map(t => t.trim()).filter(Boolean) : undefined,
+          quizzes: courseQuizzes,
+          assignments: [placeholderAssignment],
+        };
+        const payload = cleanPayload(coursePayload);
+        const payloadStr = JSON.stringify(payload);
+
         const res = await secureFetch("/api/v1/courses", {
           method: "POST",
-          body: JSON.stringify(cleanPayload({
-            name: currentCourse.title,
-            description: currentCourse.description || "Platform Course",
-            thumbnail_url: currentCourse.thumbnail_url || undefined,
-            tags: currentCourse.tags ? currentCourse.tags.split(",").map(t => t.trim()).filter(Boolean) : undefined,
-            quizzes: courseQuizzes,
-            assignments: courseAssignments,
-          })),
+          body: payloadStr,
         });
         const json = await res.json();
-        courseId = json.data?.id || json.id;
-        updatedCourse.id = courseId;
+        const courseData = json.data || json;
+        courseId = courseData?.id;
+        const placeholderAssignmentId = courseData?.assignments?.[0]?.id || courseData?.assignments?.[0]?.assignment_id;
 
-        // Update search parameter in window URL
-        if (typeof window !== "undefined" && courseId) {
+        updatedCourse.id = courseId;
+        isNewCourse = false;
+
+        // Immediately update store ID to prevent concurrent triggers from seeing a temp ID
+        useCourseStore.setState((state) => ({
+          course: {
+            ...state.course,
+            id: courseId,
+          }
+        }));
+        // Reset baseline reference to prevent exit cleanup autosave duplicates
+        lastSavedCourseJsonRef.current = JSON.stringify(useCourseStore.getState().course);
+        lastSavedPayloadsRef.current.set(`course-${courseId}`, payloadStr);
+
+        // Link the selected assignment if there is one
+        if (courseId && courseAssignments.length > 0) {
+          for (const aId of courseAssignments) {
+            await secureFetch(`/api/v1/assignments/${aId}`, {
+              method: "PUT",
+              body: JSON.stringify({ course_id: Number(courseId) }),
+            }).catch(e => console.warn(`Failed to link assignment ${aId} to course`, e));
+          }
+          
+          // Delete the placeholder assignment
+          if (placeholderAssignmentId) {
+            await secureFetch(`/api/v1/assignments/${placeholderAssignmentId}`, {
+              method: "DELETE",
+            }).catch(e => console.warn(`Failed to delete placeholder assignment ${placeholderAssignmentId}`, e));
+          }
+        } else if (courseId && placeholderAssignmentId) {
+          // If no selected assignment, update store to keep placeholder assignment as final assignment
+          updatedCourse.assignments = [{
+            id: String(placeholderAssignmentId),
+            title: placeholderAssignment.title
+          }];
+        }
+
+        // Update search parameter in window URL using Next.js router
+        if (courseId) {
           const url = new URL(window.location.href);
           if (url.searchParams.get("id") !== String(courseId)) {
             url.searchParams.set("id", String(courseId));
-            window.history.replaceState(null, "", url.pathname + url.search);
+            router.replace(url.pathname + url.search, { scroll: false });
           }
         }
 
         if (backendStatus === "active") {
-          await secureFetch(`/api/v1/courses/${courseId}`, {
-            method: "PUT",
-            body: JSON.stringify(cleanPayload({
-              name: currentCourse.title,
-              description: currentCourse.description || "Platform Course",
-              thumbnail_url: currentCourse.thumbnail_url || undefined,
-              status: "active",
-              tags: currentCourse.tags ? currentCourse.tags.split(",").map(t => t.trim()).filter(Boolean) : undefined,
-              quizzes: courseQuizzes,
-              assignments: courseAssignments,
-            })),
-          });
-        }
-      } else {
-        await secureFetch(`/api/v1/courses/${courseId}`, {
-          method: "PUT",
-          body: JSON.stringify(cleanPayload({
+          const activeCoursePayload: Record<string, unknown> = {
             name: currentCourse.title,
             description: currentCourse.description || "Platform Course",
             thumbnail_url: currentCourse.thumbnail_url || undefined,
-            status: backendStatus,
+            status: "active",
             tags: currentCourse.tags ? currentCourse.tags.split(",").map(t => t.trim()).filter(Boolean) : undefined,
             quizzes: courseQuizzes,
-            assignments: courseAssignments,
-          })),
-        });
+          };
+          const activePayload = cleanPayload(activeCoursePayload);
+          const activePayloadStr = JSON.stringify(activePayload);
+          
+
+          
+          await secureFetch(`/api/v1/courses/${courseId}`, {
+            method: "PUT",
+            body: activePayloadStr,
+          });
+          lastSavedPayloadsRef.current.set(`course-${courseId}`, activePayloadStr);
+        }
+      } else {
+        // For existing courses, also omit assignments from the PUT body (updateCourse service
+        // ignores them anyway — it just calls course.update(courseData) on table columns).
+        // Link assignments separately via PUT /api/v1/assignments/:id.
+        const coursePayload: Record<string, unknown> = {
+          name: currentCourse.title,
+          description: currentCourse.description || "Platform Course",
+          thumbnail_url: currentCourse.thumbnail_url || undefined,
+          status: backendStatus,
+          tags: currentCourse.tags ? currentCourse.tags.split(",").map(t => t.trim()).filter(Boolean) : undefined,
+          quizzes: courseQuizzes,
+        };
+        const payload = cleanPayload(coursePayload);
+        const payloadStr = JSON.stringify(payload);
+        
+        if (lastSavedPayloadsRef.current.get(`course-${courseId}`) !== payloadStr) {
+
+          
+          await secureFetch(`/api/v1/courses/${courseId}`, {
+            method: "PUT",
+            body: payloadStr,
+          });
+          lastSavedPayloadsRef.current.set(`course-${courseId}`, payloadStr);
+        }
+
+        // Link course-level assignments by updating each assignment's course_id.
+        if (courseId && courseAssignments.length > 0) {
+          for (const aId of courseAssignments) {
+            await secureFetch(`/api/v1/assignments/${aId}`, {
+              method: "PUT",
+              body: JSON.stringify({ course_id: Number(courseId) }),
+            }).catch(e => console.warn(`Failed to link assignment ${aId} to course`, e));
+          }
+        }
       }
 
       // 2. Modules Loop
@@ -276,40 +470,58 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
           .filter((id): id is number => id !== null);
 
         if (isNewModule) {
+          const payload = cleanPayload({
+            name: m.title || `Module ${mIdx + 1}`,
+            description: m.description || "",
+            order_num: mIdx + 1,
+            quizzes: mQuizzes,
+            assignments: mAssignments,
+          });
+          const payloadStr = JSON.stringify(payload);
+          
+
+          
           const res = await secureFetch(`/api/v1/courses/${courseId}/modules`, {
             method: "POST",
-            body: JSON.stringify(cleanPayload({
-              name: m.title || `Module ${mIdx + 1}`,
-              description: m.description || "",
-              order_num: mIdx + 1,
-              quizzes: mQuizzes,
-              assignments: mAssignments,
-            })),
+            body: payloadStr,
           });
           const json = await res.json();
           moduleId = String(json.data?.id || json.id);
-          updatedCourse.modules[mIdx].id = moduleId;
+          
+          const targetModule = updatedCourse.modules.find((mod: StoreModule) => String(mod.id) === String(m.id));
+          if (targetModule) {
+            targetModule.id = moduleId;
+          }
+          
+          lastSavedPayloadsRef.current.set(`module-${moduleId}`, payloadStr);
           if (m.id === newActiveModuleId) {
             newActiveModuleId = moduleId;
           }
         } else {
-          await secureFetch(`/api/v1/modules/${moduleId}`, {
-            method: "PUT",
-            body: JSON.stringify(cleanPayload({
-              name: m.title || `Module ${mIdx + 1}`,
-              description: m.description || "",
-              order_num: mIdx + 1,
-              quizzes: mQuizzes,
-              assignments: mAssignments,
-            })),
+          const payload = cleanPayload({
+            name: m.title || `Module ${mIdx + 1}`,
+            description: m.description || "",
+            order_num: mIdx + 1,
+            quizzes: mQuizzes,
+            assignments: mAssignments,
           });
-        }
+          const payloadStr = JSON.stringify(payload);
+          
+          if (lastSavedPayloadsRef.current.get(`module-${moduleId}`) !== payloadStr) {
 
-        // 3. Topics (UI Lessons) Loop
+            
+            await secureFetch(`/api/v1/modules/${moduleId}`, {
+              method: "PUT",
+              body: payloadStr,
+            });
+            lastSavedPayloadsRef.current.set(`module-${moduleId}`, payloadStr);
+          }
+        }
+               // 3. Lessons (UI Lessons) Loop
         for (let lIdx = 0; lIdx < m.lessons.length; lIdx++) {
           const l = m.lessons[lIdx];
-          const isNewTopic = String(l.id).startsWith("temp-");
-          let topicId = l.id;
+          const isNewLesson = String(l.id).startsWith("temp-");
+          let lessonId = l.id;
 
           const order = l.order || [];
           const quizOrderMap = new Map(order.filter(o => o.type === 'quiz').map((o, idx) => [o.id, idx]));
@@ -335,91 +547,122 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
             return idxA - idxB;
           });
 
-          if (isNewTopic) {
-            const res = await secureFetch(`/api/v1/modules/${moduleId}/topics`, {
+          if (isNewLesson) {
+            const payload = cleanPayload({
+              module_id: Number(moduleId),
+              name: l.title || `Lesson ${lIdx + 1}`,
+              type: "text",
+              content_text: l.content || "",
+              text: l.content || "",
+              order_num: lIdx + 1,
+              quizzes: lQuizzes,
+              assignments: lAssignments,
+            });
+            const payloadStr = JSON.stringify(payload);
+            
+            const res = await secureFetch("/api/v1/lessons", {
               method: "POST",
-              body: JSON.stringify(cleanPayload({
-                name: l.title || `Lesson ${lIdx + 1}`,
-                content_text: l.content || "",
-                text: l.content || "",
-                order_num: lIdx + 1,
-                quizzes: lQuizzes,
-                assignments: lAssignments,
-              })),
+              body: payloadStr,
             });
             const json = await res.json();
-            topicId = String(json.data?.id || json.id);
-            updatedCourse.modules[mIdx].lessons[lIdx].id = topicId;
-            if (l.id === newActiveLessonId) {
-              newActiveLessonId = topicId;
-            }
-            // Update order array inside module
-            if (updatedCourse.modules[mIdx].order) {
-              updatedCourse.modules[mIdx].order = updatedCourse.modules[mIdx].order.map((o: any) => 
-                o.id === l.id ? { ...o, id: topicId } : o
-              );
-            }
-          } else {
-            await secureFetch(`/api/v1/topics/${topicId}`, {
-              method: "PUT",
-              body: JSON.stringify(cleanPayload({
-                name: l.title || `Lesson ${lIdx + 1}`,
-                content_text: l.content || "",
-                text: l.content || "",
-                order_num: lIdx + 1,
-                quizzes: lQuizzes,
-                assignments: lAssignments,
-              })),
-            });
-          }
-
-          // 4. Lessons (UI Topics) Loop
-          for (let tIdx = 0; tIdx < sortedTopics.length; tIdx++) {
-            const t = sortedTopics[tIdx];
-            const isNewLesson = String(t.id).startsWith("temp-");
-            let lessonId = t.id;
-
-            if (isNewLesson) {
-              const res = await secureFetch(`/api/v1/topics/${topicId}/lessons`, {
-                method: "POST",
-                body: JSON.stringify(cleanPayload({
-                  name: t.title || `Topic ${tIdx + 1}`,
-                  type: "text",
-                  text: t.content || "",
-                  content_text: t.content || "",
-                  duration_minutes: 15,
-                  order_num: tIdx + 1,
-                })),
-              });
-              const json = await res.json();
-              lessonId = String(json.data?.id || json.id);
-              
-              // Find topic in store and update ID
-              const topicInStore = updatedCourse.modules[mIdx].lessons[lIdx].topics.find((topic: any) => topic.id === t.id);
-              if (topicInStore) {
-                topicInStore.id = lessonId;
-              }
-              if (t.id === newActiveTopicId) {
-                newActiveTopicId = lessonId;
-              }
-              // Update order array inside lesson
-              if (updatedCourse.modules[mIdx].lessons[lIdx].order) {
-                updatedCourse.modules[mIdx].lessons[lIdx].order = updatedCourse.modules[mIdx].lessons[lIdx].order.map((o: any) => 
-                  o.id === t.id ? { ...o, id: lessonId } : o
+            lessonId = String(json.data?.id || json.id);
+            
+            const targetModule = updatedCourse.modules.find((mod: StoreModule) => String(mod.id) === String(m.id));
+            if (targetModule) {
+              const targetLesson = targetModule.lessons.find((les: StoreLesson) => String(les.id) === String(l.id));
+              if (targetLesson) targetLesson.id = lessonId;
+              if (targetModule.order) {
+                targetModule.order = targetModule.order.map((o: { type: string; id: string | number }) => 
+                  o.id === l.id ? { ...o, id: lessonId } : o
                 );
               }
-            } else {
+            }
+            
+            lastSavedPayloadsRef.current.set(`lesson-${lessonId}`, payloadStr);
+            if (l.id === newActiveLessonId) newActiveLessonId = lessonId;
+          } else {
+            const payload = cleanPayload({
+              name: l.title || `Lesson ${lIdx + 1}`,
+              type: "text",
+              content_text: l.content || "",
+              text: l.content || "",
+              order_num: lIdx + 1,
+              quizzes: lQuizzes,
+              assignments: lAssignments,
+            });
+            const payloadStr = JSON.stringify(payload);
+            
+            if (lastSavedPayloadsRef.current.get(`lesson-${lessonId}`) !== payloadStr) {
               await secureFetch(`/api/v1/lessons/${lessonId}`, {
                 method: "PUT",
-                body: JSON.stringify(cleanPayload({
-                  name: t.title || `Topic ${tIdx + 1}`,
-                  type: "text",
-                  text: t.content || "",
-                  content_text: t.content || "",
-                  duration_minutes: 15,
-                  order_num: tIdx + 1,
-                })),
+                body: payloadStr,
               });
+              lastSavedPayloadsRef.current.set(`lesson-${lessonId}`, payloadStr);
+            }
+          }
+
+          // 4. Topics (UI Topics) Loop
+          for (let tIdx = 0; tIdx < sortedTopics.length; tIdx++) {
+            const t = sortedTopics[tIdx];
+            const isNewTopic = String(t.id).startsWith("temp-");
+            let topicId = t.id;
+
+            const tQuizzes = (t.quizzes || []).map(getQuizId).filter((id): id is number => id !== null);
+            const tAssignments = (t.assignments || []).map(getAssignmentId).filter((id): id is number => id !== null);
+
+            if (isNewTopic) {
+              const payload = cleanPayload({
+                lesson_id: Number(lessonId),
+                name: t.title || `Topic ${tIdx + 1}`,
+                content_text: t.content || "",
+                text: t.content || "",
+                order_num: tIdx + 1,
+                quizzes: tQuizzes,
+                assignments: tAssignments,
+              });
+              const payloadStr = JSON.stringify(payload);
+              
+              const res = await secureFetch("/api/v1/topics", {
+                method: "POST",
+                body: payloadStr,
+              });
+              const json = await res.json();
+              topicId = String(json.data?.id || json.id);
+              
+              const targetModule = updatedCourse.modules.find((mod: StoreModule) => String(mod.id) === String(m.id));
+              if (targetModule) {
+                const targetLesson = targetModule.lessons.find((les: StoreLesson) => String(les.id) === String(l.id));
+                if (targetLesson) {
+                  const targetTopic = targetLesson.topics.find((top: StoreTopic) => String(top.id) === String(t.id));
+                  if (targetTopic) targetTopic.id = topicId;
+                  if (targetLesson.order) {
+                    targetLesson.order = targetLesson.order.map((o: { type: string; id: string | number }) => 
+                      o.id === t.id ? { ...o, id: topicId } : o
+                    );
+                  }
+                }
+              }
+              
+              lastSavedPayloadsRef.current.set(`topic-${topicId}`, payloadStr);
+              if (t.id === newActiveTopicId) newActiveTopicId = topicId;
+            } else {
+              const payload = cleanPayload({
+                name: t.title || `Topic ${tIdx + 1}`,
+                content_text: t.content || "",
+                text: t.content || "",
+                order_num: tIdx + 1,
+                quizzes: tQuizzes,
+                assignments: tAssignments,
+              });
+              const payloadStr = JSON.stringify(payload);
+              
+              if (lastSavedPayloadsRef.current.get(`topic-${topicId}`) !== payloadStr) {
+                await secureFetch(`/api/v1/topics/${topicId}`, {
+                  method: "PUT",
+                  body: payloadStr,
+                });
+                lastSavedPayloadsRef.current.set(`topic-${topicId}`, payloadStr);
+              }
             }
           }
         }
@@ -431,14 +674,22 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
           ...state.course,
           id: courseId,
           modules: updatedCourse.modules,
+          assignments: updatedCourse.assignments || state.course.assignments,
         },
         activeModuleId: newActiveModuleId,
         activeLessonId: newActiveLessonId,
         activeTopicId: newActiveTopicId,
       }));
 
+      // Reset baseline reference to prevent exit cleanup autosave duplicates
+      lastSavedCourseJsonRef.current = JSON.stringify(useCourseStore.getState().course);
+
       queryClient.invalidateQueries({ queryKey: ["courses"] });
       queryClient.invalidateQueries({ queryKey: ["courseStats"] });
+      queryClient.invalidateQueries({ queryKey: ["course", courseId] });
+      queryClient.invalidateQueries({ queryKey: ["domains"] });
+      queryClient.invalidateQueries({ queryKey: ["domain"] });
+      queryClient.invalidateQueries({ queryKey: ["domainStats"] });
 
       if (!isSilent) {
         toast.success(
@@ -449,42 +700,133 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
         );
         router.push("/admin/courses");
       }
-    } catch (error: any) {
+    } catch (err) {
+      const error = err as Error;
       console.error(error);
       if (error.message === "Token expired") {
-        if (!isSilent && toastId) {
-          toast.error("Your session has expired. Redirecting to login...", { id: toastId });
-        }
-        if (typeof document !== "undefined") {
-          document.cookie = "token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-          document.cookie = "mock_auth_role=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-          setTimeout(() => {
-            window.location.href = "/login";
-          }, 1500);
+        if (!isSilent) {
+          if (toastId) {
+            toast.error("Your session has expired. Redirecting to login...", { id: toastId });
+          } else {
+            toast.error("Your session has expired. Redirecting to login...");
+          }
+          if (typeof document !== "undefined") {
+            document.cookie = "token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+            document.cookie = "mock_auth_role=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+            setTimeout(() => {
+              window.location.href = "/login";
+            }, 1500);
+          }
         }
       } else {
         if (!isSilent) {
-          toast.error(error.message || "Failed to save course structure", { id: toastId });
+          if (toastId) {
+            toast.error(error.message || "Failed to save course structure", { id: toastId });
+          } else {
+            toast.error(error.message || "Failed to save course structure");
+          }
         }
+      }
+    } finally {
+      isSavingRef.current = false;
+      if (isComponentMountedRef.current) {
+        setIsSaving(false);
       }
     }
   };
 
-  // Background auto-save every 30 seconds
+  const handleSaveRef = useRef(handleSave);
+  const hasUnsavedChangesRef = useRef(hasUnsavedChanges);
+
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+    hasUnsavedChangesRef.current = hasUnsavedChanges;
+  });
+
+  // 1. Mount & Exit Save Hook
+  useEffect(() => {
+    setMounted(true);
+    isComponentMountedRef.current = true;
+    return () => {
+      isComponentMountedRef.current = false;
+      
+      // Trigger save on exit if there are unsaved changes
+      const currentCourse = useCourseStore.getState().course;
+      if (currentCourse.title) {
+        const { deletedModules, deletedLessons, deletedTopics } = useCourseStore.getState();
+        const hasChanges = deletedModules.length > 0 || deletedLessons.length > 0 || deletedTopics.length > 0 ||
+          (lastSavedCourseJsonRef.current && JSON.stringify(currentCourse) !== lastSavedCourseJsonRef.current);
+        
+        if (hasChanges) {
+          handleSaveRef.current("draft", true);
+        }
+      }
+    };
+  }, []);
+
+  // 2. Sync the initial saved JSON ref when course details are loaded/initialized
+  useEffect(() => {
+    if (!mounted) return;
+
+    if (id) {
+      // If we are editing an existing course, wait until it's loaded in the store
+      if (course.id && String(course.id) === String(id) && !lastSavedCourseJsonRef.current) {
+        lastSavedCourseJsonRef.current = JSON.stringify(course);
+      }
+    } else {
+      // If we are creating a new course, set the initial empty state as the baseline
+      if (!lastSavedCourseJsonRef.current) {
+        lastSavedCourseJsonRef.current = JSON.stringify(course);
+      }
+    }
+  }, [mounted, id, course]);
+
+  // Reset caches and JSON reference when course ID changes
+  useEffect(() => {
+    if (id !== previousIdRef.current) {
+      lastSavedPayloadsRef.current.clear();
+      quizzesCacheRef.current = null;
+      assignmentsCacheRef.current = null;
+      // Only reset the JSON baseline if we are switching to a different course
+      if (previousIdRef.current !== null || !id) {
+        lastSavedCourseJsonRef.current = null;
+      }
+      previousIdRef.current = id;
+    }
+  }, [id]);
+
+  // 3. Background auto-save every 30 seconds, only if there are unsaved changes
   useEffect(() => {
     if (!mounted) return;
     const interval = setInterval(() => {
-      handleSave("draft", true);
+      if (hasUnsavedChangesRef.current()) {
+        handleSaveRef.current("draft", true);
+      }
     }, 30000);
     return () => clearInterval(interval);
   }, [mounted]);
+
+  // 4. Auto draft save on step/path navigation, only if there are unsaved changes
+  const previousPathnameRef = useRef(pathname);
+  useEffect(() => {
+    if (pathname !== previousPathnameRef.current) {
+      if (hasUnsavedChangesRef.current()) {
+        handleSaveRef.current("draft", true);
+      }
+      previousPathnameRef.current = pathname;
+    }
+  }, [pathname]);
 
   const handleBack = async () => {
     if (!course.title) {
       router.push("/admin/courses");
       return;
     }
-    await handleSave("draft");
+    if (hasUnsavedChanges()) {
+      await handleSave("draft");
+    } else {
+      router.push("/admin/courses");
+    }
   };
 
   const isRootLevel = pathname === "/admin/courses/create";
@@ -566,21 +908,24 @@ export default function CourseCreationLayout({ children }: { children: React.Rea
         <div className="flex gap-3">
           <button 
             onClick={handleBack}
-            className="px-5 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 font-semibold shadow-xs hover:bg-slate-50 transition-all text-xs"
+            disabled={isSaving}
+            className="px-5 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 font-semibold shadow-xs hover:bg-slate-50 transition-all text-xs disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Back
           </button>
           <button 
             onClick={() => handleSave("draft")}
-            className="px-8 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-md hover:bg-blue-700 transition-all text-xs whitespace-nowrap"
+            disabled={isSaving}
+            className="px-8 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-md hover:bg-blue-700 transition-all text-xs whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[110px]"
           >
-            Save as Draft
+            {isSaving ? "Saving..." : "Save as Draft"}
           </button>
           <button 
             onClick={() => handleSave("published")}
-            className="px-8 py-2 rounded-lg bg-green-600 text-white font-bold shadow-md hover:bg-green-700 transition-all text-xs whitespace-nowrap"
+            disabled={isSaving}
+            className="px-8 py-2 rounded-lg bg-green-600 text-white font-bold shadow-md hover:bg-green-700 transition-all text-xs whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[80px]"
           >
-            Publish
+            {isSaving ? "Saving..." : "Publish"}
           </button>
         </div>
       </div>

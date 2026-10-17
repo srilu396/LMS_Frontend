@@ -1,12 +1,50 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Plus, LayoutGrid, UploadCloud, Image as ImageIcon, X, BookOpen, GraduationCap, ClipboardList, Book, Sparkles, Settings } from "lucide-react";
+import { Plus, LayoutGrid, UploadCloud, Image as ImageIcon, BookOpen, GraduationCap, ClipboardList, Sparkles } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { isEmpty, inputErrorClass, errorTextClass } from "@/lib/validation";
 import { useCourseStore } from "@/store/useCourseStore";
 import { useCourse } from "@/features/admin/courses/api/course-api";
-import { useDomains } from "@/features/admin/domains/api/domain-api";
+
+interface RawQuiz {
+  id: string | number;
+  name?: string;
+}
+
+interface RawAssignment {
+  id: string | number;
+  title?: string;
+  name?: string;
+}
+
+interface RawTopic {
+  id: string | number;
+  name: string;
+  content_text?: string;
+  text?: string;
+  quizzes?: RawQuiz[];
+  assignments?: RawAssignment[];
+}
+
+interface RawLesson {
+  id: string | number;
+  name: string;
+  content_text?: string;
+  text?: string;
+  topics?: RawTopic[];
+  quizzes?: RawQuiz[];
+  assignments?: RawAssignment[];
+}
+
+interface RawModule {
+  id: string | number;
+  name: string;
+  description?: string;
+  lessons?: RawLesson[];
+  quizzes?: RawQuiz[];
+  assignments?: RawAssignment[];
+}
 
 export default function CreateCoursePage() {
   const router = useRouter();
@@ -14,48 +52,54 @@ export default function CreateCoursePage() {
   const id = searchParams.get("id");
   const { data: fetchedCourse, isLoading } = useCourse(id || undefined);
   
-  const { data: domainsRes } = useDomains(1, 100);
-  const domainsList = domainsRes?.data || [];
 
   const { course, setCourseDetails, addModule, setCourse, resetCourse } = useCourseStore();
   const { title, thumbnail_url = "", description = "", domain = "", tags = "" } = course;
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const [formError, setFormError] = useState("");
+  const [hasInitialized, setHasInitialized] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
 
 
   useEffect(() => {
-    if (fetchedCourse) {
-      const mappedModules = (fetchedCourse.modules || []).map((m: any) => ({
+    if (id && fetchedCourse) {
+      const mappedModules = (fetchedCourse.modules || []).map((m: RawModule) => ({
         id: String(m.id),
         title: m.name || "",
         description: m.description || "",
-        lessons: (m.topics || []).map((t: any) => ({
-          id: String(t.id),
-          title: t.name || "",
-          content: t.content_text || t.text || "",
-          topics: (t.lessons || []).map((l: any) => ({
-            id: String(l.id),
-            title: l.name || "",
-            content: l.content_text || l.text || "",
+        lessons: (m.lessons || []).map((l: RawLesson) => ({
+          id: String(l.id),
+          title: l.name || "",
+          content: l.content_text || l.text || "",
+          topics: (l.topics || []).map((t: RawTopic) => ({
+            id: String(t.id),
+            title: t.name || "",
+            content: t.content_text || t.text || "",
+            quizzes: (t.quizzes || []).map((q: RawQuiz) => ({
+              id: String(q.id),
+              title: q.name || "",
+            })),
+            assignments: (t.assignments || []).map((a: RawAssignment) => ({
+              id: String(a.id),
+              title: a.title || a.name || "",
+            })),
           })),
-          quizzes: (t.quizzes || []).map((q: any) => ({
+          quizzes: (l.quizzes || []).map((q: RawQuiz) => ({
             id: String(q.id),
             title: q.name || "",
           })),
-          assignments: (t.assignments || []).map((a: any) => ({
+          assignments: (l.assignments || []).map((a: RawAssignment) => ({
             id: String(a.id),
             title: a.title || a.name || "",
           })),
         })),
-        quizzes: (m.quizzes || []).map((q: any) => ({
+        quizzes: (m.quizzes || []).map((q: RawQuiz) => ({
           id: String(q.id),
           title: q.name || "",
         })),
-        assignments: (m.assignments || []).map((a: any) => ({
+        assignments: (m.assignments || []).map((a: RawAssignment) => ({
           id: String(a.id),
           title: a.title || a.name || "",
         })),
@@ -69,17 +113,22 @@ export default function CreateCoursePage() {
         thumbnail_url: fetchedCourse.thumbnail_url || "",
         description: fetchedCourse.description || "",
         modules: mappedModules,
-        quizzes: (fetchedCourse.quizzes || []).map((q: any) => ({
+        quizzes: (fetchedCourse.quizzes || []).map((q: RawQuiz) => ({
           id: String(q.id),
           title: q.name || "",
         })),
-        assignments: (fetchedCourse.assignments || []).map((a: any) => ({
+        assignments: (fetchedCourse.assignments || []).map((a: RawAssignment) => ({
           id: String(a.id),
           title: a.title || a.name || "",
         })),
       });
+      setHasInitialized(true);
+    } else if (!id && !hasInitialized) {
+      // Only reset if we're not editing an existing course and haven't initialized yet
+      resetCourse();
+      setHasInitialized(true);
     }
-  }, [fetchedCourse, setCourse]);
+  }, [fetchedCourse, setCourse, id, resetCourse, hasInitialized]);
 
   if (id && isLoading) {
     return (
@@ -170,8 +219,8 @@ export default function CreateCoursePage() {
               <Sparkles size={20} />
             </div>
             <div>
-              <h1 className="text-2xl font-black text-slate-800 tracking-tight">Course Blueprint</h1>
-              <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider">Configure your course metadata and curriculum blueprint</p>
+              <h1 className="text-2xl font-black text-slate-800 tracking-tight">Course Configuration</h1>
+              <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider">Define your course details, structure, and content elements</p>
             </div>
           </div>
         </div>
@@ -272,8 +321,8 @@ export default function CreateCoursePage() {
                 <div className="relative pl-6 border-l border-slate-200 flex flex-col gap-8 py-2 ml-3">
                   {course.modules.map((m, idx) => {
                     const totalLessons = m.lessons?.length || 0;
-                    const totalQuizzes = (m.quizzes?.length || 0) + m.lessons?.reduce((acc: number, l: any) => acc + (l.quizzes?.length || 0), 0);
-                    const totalAssignments = (m.assignments?.length || 0) + m.lessons?.reduce((acc: number, l: any) => acc + (l.assignments?.length || 0), 0);
+                    const totalQuizzes = (m.quizzes?.length || 0) + m.lessons?.reduce((acc: number, l: { quizzes?: { id: string | number }[] }) => acc + (l.quizzes?.length || 0), 0);
+                    const totalAssignments = (m.assignments?.length || 0) + m.lessons?.reduce((acc: number, l: { assignments?: { id: string | number }[] }) => acc + (l.assignments?.length || 0), 0);
 
                     return (
                       <div key={m.id} className="relative group">
@@ -330,6 +379,7 @@ export default function CreateCoursePage() {
                     src={thumbnail_url} 
                     alt="Course cover preview" 
                     className="w-full h-full object-cover" 
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
                   />
                   <div className="absolute inset-0 bg-black/45 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center gap-2">
                     <button
@@ -369,33 +419,6 @@ export default function CreateCoursePage() {
                   </div>
                 </div>
               )}
-
-              <div className="flex flex-col gap-3">
-                <div className="relative flex items-center justify-center">
-                  <div className="absolute inset-x-0 border-t border-slate-100"></div>
-                  <span className="relative bg-white px-2.5 text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                    OR ENTER URL
-                  </span>
-                </div>
-
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={thumbnail_url}
-                    onChange={(e) => handleFieldChange("thumbnail_url", e.target.value)}
-                    className="w-full px-3 py-2.5 pr-8 rounded-lg bg-slate-50/50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-xs font-semibold text-slate-800 placeholder-slate-400"
-                    placeholder="https://example.com/cover.png"
-                  />
-                  {thumbnail_url && (
-                    <button
-                      onClick={() => handleFieldChange("thumbnail_url", "")}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-              </div>
             </div>
 
 

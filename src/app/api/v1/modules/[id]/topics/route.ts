@@ -11,9 +11,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const { id: moduleId } = await params;
   const auth = getAuth(request);
-  const BACKEND_URL = `${API_HOST}/api/v1/modules/${id}/topics`;
+  const BACKEND_URL = `${API_HOST}/api/v1/modules/${moduleId}/topics`;
 
   try {
     const body = await request.json();
@@ -40,7 +40,7 @@ export async function POST(
     const message = error instanceof Error ? error.message : String(error);
     console.error(`POST Module Topic proxy error [${BACKEND_URL}]:`, message);
     return NextResponse.json(
-      { message: "Failed to add topic to module" },
+      { message: "Failed to create topic in module" },
       { status: 502 }
     );
   }

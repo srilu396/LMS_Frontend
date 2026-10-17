@@ -17,7 +17,39 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { Layers, CheckCircle, Users, MoreVertical, Pencil, Trash2, Eye, Upload } from "lucide-react";
+import { Layers, CheckCircle, XCircle, Users, MoreVertical, Pencil, Trash2, Eye, Upload } from "lucide-react";
+import { Toaster } from "react-hot-toast";
+
+// Dummy data for batches
+const DUMMY_BATCHES: Batch[] = [
+  {
+    id: "101",
+    name: "Computer Science - 2024 - Section A",
+    instructor: "Dr. Robert Wilson",
+    students: 45,
+    status: "Active",
+    institution: "Global Tech Institute",
+    course: "Java Development"
+  },
+  {
+    id: "102",
+    name: "Web Development Bootcamp",
+    instructor: "Sarah Jenkins",
+    students: 32,
+    status: "Active",
+    institution: "National University",
+    course: "Web Development"
+  },
+  {
+    id: "103",
+    name: "Data Science Fundamentals",
+    instructor: "Michael Chang",
+    students: 28,
+    status: "Inactive",
+    institution: "Global Tech Institute",
+    course: "Data Science"
+  }
+];
 
 function ActionMenu({ onView, onEdit, onDelete }: { onView: () => void; onEdit: () => void; onDelete: () => void }) {
   return (
@@ -89,10 +121,15 @@ function BatchesPageContent() {
     batch: null,
   });
 
-  const [bulkModal, setBulkModal] = useState<{ open: boolean; batchId?: string | number }>({
-    open: false,
-    batchId: undefined,
-  });
+  useEffect(() => {
+    if (searchParams.get("action") === "create") {
+      setFormModal({ open: true, mode: "add", batch: null });
+      // Optionally replace the URL so it doesn't keep reopening on refresh
+      router.replace("/admin/batches");
+    }
+  }, [searchParams, router]);
+
+  const [bulkModal, setBulkModal] = useState(false);
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -170,7 +207,7 @@ function BatchesPageContent() {
 
   const extraHeaderActions = (
     <button
-      onClick={() => setBulkModal({ open: true, batchId: undefined })}
+      onClick={() => setBulkModal(true)}
       className="flex items-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-border/70 rounded-lg hover:bg-gray-50 dark:bg-muted/50 bg-white dark:bg-card transition-all text-gray-700 dark:text-foreground shadow-sm"
     >
       <Upload size={16} />
@@ -246,19 +283,16 @@ function BatchesPageContent() {
       )}
 
       {/* Modals */}
-      {formModal.open && (
-        <BatchFormModal
-          open={formModal.open}
-          mode={formModal.mode}
-          batch={formModal.batch}
-          onClose={() => setFormModal({ open: false, mode: "add", batch: null })}
-        />
-      )}
+      <BatchFormModal
+        open={formModal.open}
+        mode={formModal.mode}
+        batch={formModal.batch}
+        onClose={() => setFormModal({ open: false, mode: "add", batch: null })}
+      />
 
       <BulkUploadModal
-        open={bulkModal.open}
-        batchId={bulkModal.batchId}
-        onClose={() => setBulkModal({ open: false, batchId: undefined })}
+        open={bulkModal}
+        onClose={() => setBulkModal(false)}
       />
       
       <BatchDeleteDialog

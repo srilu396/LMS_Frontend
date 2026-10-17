@@ -341,6 +341,29 @@ export function getBatchStudentsExportPdfUrl(id: string | number): string {
   return `${API_HOST}/api/v1/batches/${id}/students/export-pdf`;
 }
 
+/**
+ * Download batch bulk upload template
+ */
+export async function downloadBatchBulkUploadTemplate() {
+  const url = `${API_HOST}/api/v1/batches/bulk-upload/template`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error("Failed to download template");
+  }
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = downloadUrl;
+  a.download = "batch_students_bulk_upload_template.csv";
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(downloadUrl);
+  document.body.removeChild(a);
+}
+
 // ─── Tutor Lookup (Batch Management only) ────────────────────────────────────
 // Uses GET /api/v1/tutors/lookup to fetch tutors filtered by institution.
 // This is intentionally separate from the global Tutor Management API
@@ -468,13 +491,3 @@ export async function fetchStudentLookup(institutionId?: string | number, search
   return result.data || result || [];
 }
 
-export async function downloadBatchBulkUploadTemplate(): Promise<Blob> {
-  const response = await fetch(`${BASE_URL}/bulk-upload/template`, {
-    method: "GET",
-    headers: getAuthHeaders(),
-  });
-  if (!response.ok) {
-    throw new Error("Failed to download template");
-  }
-  return response.blob();
-}
