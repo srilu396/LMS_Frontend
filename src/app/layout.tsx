@@ -28,9 +28,12 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               try {
-                if (!localStorage.getItem('theme_default_v1')) {
+                if (window.location.pathname.startsWith('/login') || !localStorage.getItem('theme_default_v1')) {
                   localStorage.removeItem('theme');
                   localStorage.setItem('theme_default_v1', 'true');
+                  document.documentElement.classList.remove('dark');
+                  document.documentElement.classList.add('light');
+                  document.documentElement.style.colorScheme = 'light';
                 }
               } catch (e) {}
             `,
