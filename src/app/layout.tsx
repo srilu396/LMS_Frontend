@@ -24,6 +24,18 @@ export default function RootLayout({
   return (
     <html lang="en" className={cn("font-sans", geist.variable)} suppressHydrationWarning>
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                if (!localStorage.getItem('theme_default_v1')) {
+                  localStorage.removeItem('theme');
+                  localStorage.setItem('theme_default_v1', 'true');
+                }
+              } catch (e) {}
+            `,
+          }}
+        />
         <Script
           id="console-override"
           strategy="beforeInteractive"
@@ -41,7 +53,7 @@ export default function RootLayout({
       <body className="bg-background text-foreground m-0 p-0 antialiased min-h-screen" suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
+          defaultTheme="light"
           enableSystem
           disableTransitionOnChange
         >

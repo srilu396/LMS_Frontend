@@ -75,7 +75,7 @@ export default function RolesSidebar({ role }: RolesSidebarProps) {
                   text-slate-300
                   hover:text-white
                   hover:border-white/20
-                  hover:bg-white dark:bg-card/10
+                  hover:bg-white/10 dark:hover:bg-white/10
                   hover:shadow-lg hover:shadow-black/20
                   hover:scale-105 active:scale-95
                   transition-all duration-200
@@ -98,7 +98,7 @@ export default function RolesSidebar({ role }: RolesSidebarProps) {
                 bg-transparent border border-transparent
                 text-transparent
                 hover:border-white/20
-                hover:bg-white dark:bg-card/10
+                hover:bg-white/10 dark:hover:bg-white/10
                 shadow-none hover:shadow-none
                 hover:scale-105 active:scale-95
                 transition-all duration-200

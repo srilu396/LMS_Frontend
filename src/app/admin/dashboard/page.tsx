@@ -32,7 +32,7 @@ export default function DashboardPage() {
 
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Admin Hub</h1>
-          <p className="text-card-foreground text-sm">
+          <p className="text-muted-foreground text-sm">
             Manage institutions, learning paths, and users.
           </p>
         </div>

@@ -4,7 +4,7 @@ export default function TutorAssignmentsPage() {
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Assignments</h1>
-          <p className="text-card-foreground text-sm">
+          <p className="text-muted-foreground text-sm">
             Review and grade student assignments.
           </p>
         </div>
