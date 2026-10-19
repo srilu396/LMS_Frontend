@@ -49,7 +49,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## 🔗 Backend Integration Details
 
-- **Base API URL**: `https://lms-backend-n83k.onrender.com/api/v1`
+- **Base API URL**: `https://lms-backend-6a6c.onrender.com/api/v1`
 - **Authentication**: Uses Bearer Token authentication. The frontend extracts the `token` from cookies and forwards it in the `Authorization` header.
 - **Data Fetching Strategy**: 
     - **TanStack Query** is used for student operations to provide automatic caching, background updates, and seamless state management.
